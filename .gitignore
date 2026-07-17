@@ -1,6 +1,27 @@
-.venv/
+# Python
 __pycache__/
-*.log
-logs/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
 node_modules/
-.ipynb_checkpoints/
+
+# uv
+uv.lock.bak
+
+# Airflow
+logs/
+airflow.cfg
+airflow.db
+standalone_admin_password.txt
+
+# Pipeline outputs (raw data can stay if it's the small sample set, but
+# generated staging/processed artifacts should not be committed)
+data/staging/
+data/processed/
+
+# OS
+.DS_Store
