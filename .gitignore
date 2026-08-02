@@ -23,5 +23,11 @@ standalone_admin_password.txt
 data/staging/
 data/processed/
 
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+
 # OS
 .DS_Store
+
