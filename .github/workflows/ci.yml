@@ -32,4 +32,4 @@ jobs:
         run: uv run pytest
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=. --cov-report=term-missing
+        run: uv run --with pytest-cov pytest --cov=. --cov-report=term-missing
