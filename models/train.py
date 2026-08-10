@@ -3,7 +3,7 @@ import os
 import mlflow
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score, davies_bouldin_score
+from sklearn.metrics import davies_bouldin_score, silhouette_score
 
 # Set MLflow tracking URI if active server is running
 mlflow_uri = os.getenv("MLFLOW_TRACKING_URI", "http://127.0.0.1:5001")
