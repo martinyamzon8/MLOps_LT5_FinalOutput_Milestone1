@@ -1,4 +1,4 @@
-# MLOps LT5 - Milestone 1: PAL Passenger Data Pipeline
+# MLOps LT5 - PAL Passenger Data Pipeline (Milestone 1 + 2)
 
 Philippine Airlines currently has no empirical way to classify passengers as
 leisure, business, or other travel segments. This project operationalizes a
@@ -7,9 +7,10 @@ historical booking data (flight date, route, cabin, farebrand, POS region,
 ticketing channel, purchase lead time, group status, and related fields).
 This model has no current MLOps practice around it -- training happens ad
 hoc in a data analyst's Jupyter notebook, with manual Excel-based cleaning
-and no version control or drift monitoring. Milestone 1 builds the first
-piece of that MLOps foundation: an orchestrated, validated, and versioned
-data pipeline that will feed the clustering model in later milestones.
+and no version control or drift monitoring. Milestone 1 built an
+orchestrated, validated, and versioned data pipeline. Milestone 2 adds
+MLflow experiment tracking, an automated pytest suite, and a GitHub
+Actions CI workflow on top of it.
 
 ## Pipeline
 
@@ -26,37 +27,65 @@ A 3-task Airflow DAG (`dags/training_pipeline.py`):
 3. **load** - writes the validated data as a timestamped, versioned
    parquet file.
 
+## Continuous Integration
+
+![CI](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml/badge.svg)
+
+Every push and pull request against `main` runs lint (Ruff), the full
+pytest suite, and a coverage report via GitHub Actions
+(`.github/workflows/ci.yml`, GitHub-hosted `ubuntu-latest` runner). See the
+[Actions tab](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml)
+for run history.
+
 ## Running it locally
 
 Requires [uv](https://docs.astral.sh/uv/) and Docker.
 
-### 1. Install dependencies and run tests
+### 1. Install dependencies
 
 ```bash
 uv sync
-uv run pytest
-uv run ruff check .
 ```
 
-### 2. Start Airflow
+### 2. Run the full test suite
+
+```bash
+uv run ruff check .
+uv run pytest
+uv run --with pytest-cov pytest --cov=. --cov-report=term-missing
+```
+
+This runs the data validation, model quality, and pipeline integration
+tests (`tests/`) and prints a line-coverage report for the pipeline and
+training code.
+
+### 3. Start Airflow + the MLflow tracking server
 
 ```bash
 docker compose up --build
 ```
 
-On first boot, Airflow's `standalone` mode auto-generates an admin user and
-prints the password to the terminal (also saved to
-`logs/standalone_admin_password.txt`). Once you see `Airflow is ready`,
-open [http://localhost:8080](http://localhost:8080) and log in with:
+This starts three containers: Postgres, Airflow (`standalone` mode), and
+MLflow (`mlflow` service, tracking server on port 5001). On first boot,
+Airflow auto-generates an admin user and prints the password to the
+terminal (also saved to `logs/standalone_admin_password.txt`).
 
-- username: `admin`
-- password: (from the terminal output / `logs/standalone_admin_password.txt`)
+- Airflow UI: [http://localhost:8080](http://localhost:8080)
+  (`admin` / password from terminal output)
+- MLflow UI: [http://localhost:5001](http://localhost:5001)
 
-### 3. Run the pipeline
+The MLflow tracking URI is read from the `MLFLOW_TRACKING_URI` environment
+variable (defaults to `http://127.0.0.1:5001` if unset), not hardcoded.
+The tracking server uses a SQLite backend
+(`BACKEND_STORE_URI=sqlite:////opt/mlflow/mlflow.db`) with artifacts
+written to `/opt/mlflow/mlruns`.
+
+### 4. Run the pipeline
 
 In the Airflow UI, find the `pal_passenger_data_pipeline` DAG, un-pause it,
 and trigger a run (the play button). Watch the three tasks
-(`extract -> validate -> load`) turn green in the Graph view.
+(`extract -> validate -> load`) turn green in the Graph view. Each
+training/evaluation run also appears as a logged run in the MLflow UI.
 
 To stop everything:
 
@@ -82,6 +111,9 @@ committed (see `.gitignore`).
 ## Repository structure
 
 ```
+├── .github/
+│   └── workflows/
+│       └── ci.yml             # lint + test + coverage on push/PR to main
 ├── dags/
 │   ├── pipeline_logic.py     # extract/validate/load functions + Pandera schema
 │   └── training_pipeline.py  # Airflow DAG wiring the three tasks together
@@ -89,10 +121,14 @@ committed (see `.gitignore`).
 │   ├── raw/                  # sample/aggregated PAL exports (no PII)
 │   ├── staging/              # intermediate files between tasks (gitignored)
 │   └── processed/            # versioned clean output artifacts (gitignored)
+├── models/
+│   └── train.py               # training script with MLflow tracking
 ├── tests/
-│   └── test_pipeline.py
-├── Dockerfile                 # Airflow image + our pipeline dependencies
-├── docker-compose.yaml        # Postgres + Airflow (standalone/LocalExecutor)
+│   ├── test_pipeline.py             # data validation tests (Pandera schema)
+│   ├── test_model_quality.py        # model quality / threshold tests
+│   └── test_pipeline_integration.py # end-to-end pipeline integration test
+├── Dockerfile                 # Airflow + MLflow image, our pipeline dependencies
+├── docker-compose.yaml        # Postgres + Airflow (standalone) + MLflow
 ├── requirements-airflow.txt   # deps installed inside the Airflow container
 ├── pyproject.toml
 ├── .pre-commit-config.yaml
