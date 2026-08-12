@@ -47,7 +47,7 @@ Requires [uv](https://docs.astral.sh/uv/) and Docker.
 uv sync
 ```
 
-### 2. Run the full test suite
+### 2. Run the full test suite & data drift monitoring
 
 ```bash
 uv run ruff check .
@@ -55,9 +55,17 @@ uv run pytest
 uv run --with pytest-cov pytest --cov=. --cov-report=term-missing
 ```
 
-This runs the data validation, model quality, and pipeline integration
-tests (`tests/`) and prints a line-coverage report for the pipeline and
-training code.
+To run only the Evidently AI data drift monitor and generate the interactive HTML report:
+
+```bash
+uv run pytest tests/test_data_drift.py -v
+# Or run the standalone CLI monitor:
+uv run python tests/test_data_drift.py
+```
+
+This compares current/incoming data against the benchmark dataset in `data/`, flags any features that exceed the **15% drift threshold** (`drift_share=0.15`), and outputs interactive visual reports to:
+- `reports/data_drift_report.html` (interactive distributions, stattest scores, and drift tables)
+- `reports/data_drift_test_suite.html` (visual test suite pass/fail summary)
 
 ### 3. Start Airflow + the MLflow tracking server
 
@@ -118,15 +126,21 @@ committed (see `.gitignore`).
 │   ├── pipeline_logic.py     # extract/validate/load functions + Pandera schema
 │   └── training_pipeline.py  # Airflow DAG wiring the three tasks together
 ├── data/
-│   ├── raw/                  # sample/aggregated PAL exports (no PII)
-│   ├── staging/              # intermediate files between tasks (gitignored)
-│   └── processed/            # versioned clean output artifacts (gitignored)
+│   ├── raw/                       # sample/aggregated PAL exports (no PII)
+│   ├── benchmark_data.parquet     # benchmark reference dataset
+│   ├── sample_drifted_data.parquet# sample production dataset with controlled drift
+│   ├── staging/                   # intermediate files between tasks (gitignored)
+│   └── processed/                 # versioned clean output artifacts (gitignored)
 ├── models/
-│   └── train.py               # training script with MLflow tracking
+│   └── train.py                   # training script with MLflow tracking
+├── reports/
+│   ├── data_drift_report.html     # Evidently interactive data drift report
+│   └── data_drift_test_suite.html # Evidently test suite report
 ├── tests/
 │   ├── test_pipeline.py             # data validation tests (Pandera schema)
 │   ├── test_model_quality.py        # model quality / threshold tests
-│   └── test_pipeline_integration.py # end-to-end pipeline integration test
+│   ├── test_pipeline_integration.py # end-to-end pipeline integration test
+│   └── test_data_drift.py           # Evidently AI data drift monitoring & 15% threshold tests
 ├── Dockerfile                 # Airflow + MLflow image, our pipeline dependencies
 ├── docker-compose.yaml        # Postgres + Airflow (standalone) + MLflow
 ├── requirements-airflow.txt   # deps installed inside the Airflow container
