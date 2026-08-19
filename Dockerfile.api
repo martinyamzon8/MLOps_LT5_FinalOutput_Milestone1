@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install uv for fast and reliable dependency resolution
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Copy dependency definition
+COPY pyproject.toml .
+COPY uv.lock* .
+
+# Install dependencies using uv
+RUN uv sync --no-dev
+
+# Copy application modules and artifacts
+COPY api /app/api
+COPY models /app/models
+COPY data /app/data
+
+# Configurable environment variables (never hardcoded)
+ENV HOST=0.0.0.0
+ENV PORT=8000
+ENV MODEL_NAME=PAL_Passenger_Segmenter
+ENV MODEL_VERSION=v1.0.0
+ENV MODEL_ARTIFACT_PATH=/app/models/pal_passenger_segmenter_v1.0.0.joblib
+ENV MLFLOW_TRACKING_URI=http://mlflow:5001
+
+EXPOSE 8000
+
+# Start FastAPI serving endpoint with Uvicorn
+CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

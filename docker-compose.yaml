@@ -42,6 +42,22 @@ services:
       - .:/opt/mlflow
     command: uv run mlflow server --host 0.0.0.0 --port 5001 --backend-store-uri sqlite:////opt/mlflow/mlflow.db --default-artifact-root /opt/mlflow/mlruns
 
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5001
+      - MODEL_NAME=PAL_Passenger_Segmenter
+      - MODEL_VERSION=v1.0.0
+      - MODEL_ARTIFACT_PATH=/app/models/pal_passenger_segmenter_v1.0.0.joblib
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+    depends_on:
+      - mlflow
+
 volumes:
   postgres-db-volume:
-

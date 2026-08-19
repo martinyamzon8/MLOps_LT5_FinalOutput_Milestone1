@@ -1,156 +1,199 @@
-# MLOps LT5 - PAL Passenger Data Pipeline (Milestone 1 + 2)
+# Philippine Airlines (PAL) Passenger Market Segmentation - Full MLOps System
 
-Philippine Airlines currently has no empirical way to classify passengers as
-leisure, business, or other travel segments. This project operationalizes a
-clustering model that assigns each booking to a market segment based on
-historical booking data (flight date, route, cabin, farebrand, POS region,
-ticketing channel, purchase lead time, group status, and related fields).
-This model has no current MLOps practice around it -- training happens ad
-hoc in a data analyst's Jupyter notebook, with manual Excel-based cleaning
-and no version control or drift monitoring. Milestone 1 built an
-orchestrated, validated, and versioned data pipeline. Milestone 2 adds
-MLflow experiment tracking, an automated pytest suite, and a GitHub
-Actions CI workflow on top of it.
+[![CI](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml/badge.svg)](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml)
 
-## Pipeline
+A complete, production-grade MLOps system that operationalizes a machine learning clustering model for Philippine Airlines (PAL) passenger market segmentation (e.g. *Business / Premium Traveler*, *Standard Leisure Traveler*, *Advance Booking / Group Travel*).
 
-A 3-task Airflow DAG (`dags/training_pipeline.py`):
+The system integrates all 5 architectural layers:
+1. **Data Pipeline (M1):** Automated Airflow extraction, Pandera schema enforcement, and versioned Parquet artifact generation.
+2. **Experiment Tracking & Model Registry (M2):** MLflow experiment tracking with logged hyperparameters, silhouette/Davies-Bouldin metrics, and registered models.
+3. **Automated Testing & CI (M2):** Pytest test suite (>80% coverage) with data validation, model quality gates, API tests, and GitHub Actions CI.
+4. **Model Serving Endpoint (Final):** FastAPI REST API containerized with Docker, Pydantic request validation (HTTP 422 enforcement), confidence score calculation, and health monitoring (`GET /health`, `POST /predict`).
+5. **Monitoring Dashboard (Final):** Evidently AI statistical drift monitoring (`reports/evidently_report.html`) and operational interpretation (`reports/findings.md`).
 
-1. **extract** - reads raw PAL booking exports (`.xlsx`) from `data/raw/`,
-   concatenates them, and derives the two calculated fields from the
-   problem framing doc: `PurchaseLeadTime` and `Group Status`.
-2. **validate** - enforces a Pandera schema (`dags/pipeline_logic.py`) on
-   the extracted data. If any row violates a rule (e.g. an invalid Cabin
-   code, a negative fare, a PAX Count below 1), the task raises
-   `SchemaError` and the DAG run fails -- this is an enforced check, not a
-   warning.
-3. **load** - writes the validated data as a timestamped, versioned
-   parquet file.
+---
 
-## Continuous Integration
+## 1. System Architecture
 
-![CI](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml/badge.svg)
+```mermaid
+graph TD
+    A[Raw Booking Data .xlsx] -->|Extract| B(dags/training_pipeline.py)
+    B -->|Pandera Schema Check| C{Data Quality Gate}
+    C -->|Pass| D[Versioned Parquet Artifact]
+    D -->|Train & Log| E(models/train.py)
+    E -->|Metrics & Artifacts| F[(MLflow Model Registry)]
+    F -->|Deploy v1.0.0| G[FastAPI Serving Endpoint: Port 8000]
+    D -->|Baseline vs Production| H(monitoring/run_report.py)
+    H -->|Data & Prediction Drift| I[Evidently Report: reports/evidently_report.html]
+    I -->|Operational Actions| J[reports/findings.md]
+```
 
-Every push and pull request against `main` runs lint (Ruff), the full
-pytest suite, and a coverage report via GitHub Actions
-(`.github/workflows/ci.yml`, GitHub-hosted `ubuntu-latest` runner). See the
-[Actions tab](https://github.com/martinyamzon8/MLOps_LT5_FinalOutput_Milestone1/actions/workflows/ci.yml)
-for run history.
+---
 
-## Running it locally
+## 2. Model Serving Endpoint (FastAPI)
 
-Requires [uv](https://docs.astral.sh/uv/) and Docker.
+The model serving endpoint is built with **FastAPI** and **Pydantic**, exposing clean RESTful interfaces with automated input validation and OpenAPI/Swagger documentation.
 
-### 1. Install dependencies
+### Core Endpoints
 
+| Method | Path | Description | Status Code |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/health` | Live health probe & active model version verification | `200 OK` |
+| `POST` | `/predict` | Predict passenger market segment & confidence score | `200 OK` / `422 Unprocessable` |
+| `POST` | `/predict/batch` | Batch inference across multiple passenger reservations | `200 OK` |
+| `GET` | `/docs` | Interactive Swagger UI API documentation | `200 OK` |
+| `GET` | `/` | System root metadata | `200 OK` |
+
+### Live Demo & API Usage
+
+#### 1. Verify Endpoint Health (`GET /health`)
+```bash
+curl -X GET http://localhost:8000/health
+```
+**Response:**
+```json
+{
+  "status": "ok",
+  "model_version": "v1.0.0",
+  "model_name": "PAL_Passenger_Segmenter",
+  "model_source": "artifact (pal_passenger_segmenter_v1.0.0.joblib)",
+  "timestamp": "2026-08-20T00:00:00.000000Z"
+}
+```
+
+#### 2. Run Single Passenger Prediction (`POST /predict`)
+```bash
+# Windows PowerShell
+Invoke-RestMethod -Uri "http://localhost:8000/predict" -Method Post -ContentType "application/json" -Body '{"PurchaseLeadTime": 14.0, "PAX_Count": 1, "AverageFare": 145.50}'
+
+# cURL (Bash / Linux / macOS)
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"PurchaseLeadTime": 14.0, "PAX_Count": 1, "AverageFare": 145.50}'
+```
+**Response:**
+```json
+{
+  "status": "ok",
+  "prediction": 1,
+  "segment_name": "Business / Premium Traveler",
+  "confidence": 0.9412,
+  "model_version": "v1.0.0",
+  "features": {
+    "PurchaseLeadTime": 14.0,
+    "PAX Count": 1,
+    "AverageFare": 145.50
+  }
+}
+```
+
+#### 3. Schema Validation & Error Handling (HTTP 422)
+If invalid data is sent (e.g. negative fare, PAX count < 1, negative lead time), the endpoint rejects the payload with HTTP **422 Unprocessable Entity** instead of crashing with HTTP 500:
+```bash
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"PurchaseLeadTime": 10.0, "PAX_Count": 0, "AverageFare": -50.0}'
+```
+
+---
+
+## 3. Evidently AI Monitoring Dashboard & Findings
+
+Statistical drift monitoring compares historical baseline data (`data/benchmark_data.parquet`) against production traffic (`data/sample_drifted_data.parquet`).
+
+### Generate the Monitoring Dashboard
+Run the monitoring script:
+```bash
+python monitoring/run_report.py
+# Or with uv:
+uv run python monitoring/run_report.py
+```
+
+Outputs:
+- **Interactive HTML Report:** `reports/evidently_report.html` (Data Drift + Target/Prediction Drift).
+- **Written Interpretation & Action Playbook:** `reports/findings.md`.
+
+---
+
+## 4. Running the Entire System Locally
+
+### Prerequisites
+- [uv](https://docs.astral.sh/uv/)
+- [Docker & Docker Compose](https://www.docker.com/)
+
+### 1. Install Local Dependencies
 ```bash
 uv sync
 ```
 
-### 2. Run the full test suite & data drift monitoring
-
+### 2. Run Linting, Test Suite & Coverage
 ```bash
+# Lint with Ruff (0 violations enforced)
 uv run ruff check .
-uv run pytest
-uv run --with pytest-cov pytest --cov=. --cov-report=term-missing
+
+# Run all 25 automated unit, quality, and API tests
+uv run pytest -v
+
+# Run with test coverage (>80% line coverage)
+uv run --with pytest-cov pytest --cov=api --cov=monitoring --cov=models --cov-report=term-missing
 ```
 
-To run only the Evidently AI data drift monitor and generate the interactive HTML report:
-
-```bash
-uv run pytest tests/test_data_drift.py -v
-# Or run the standalone CLI monitor:
-uv run python tests/test_data_drift.py
-```
-
-This compares current/incoming data against the benchmark dataset in `data/`, flags any features that exceed the **15% drift threshold** (`drift_share=0.15`), and outputs interactive visual reports to:
-- `reports/data_drift_report.html` (interactive distributions, stattest scores, and drift tables)
-- `reports/data_drift_test_suite.html` (visual test suite pass/fail summary)
-
-### 3. Start Airflow + the MLflow tracking server
-
+### 3. Launch Full Containerized Stack (Docker Compose)
 ```bash
 docker compose up --build
 ```
 
-This starts three containers: Postgres, Airflow (`standalone` mode), and
-MLflow (`mlflow` service, tracking server on port 5001). On first boot,
-Airflow auto-generates an admin user and prints the password to the
-terminal (also saved to `logs/standalone_admin_password.txt`).
+This boots 4 orchestrated services:
+- **FastAPI Serving Endpoint (`api`):** [http://localhost:8000](http://localhost:8000) (Interactive Swagger docs: [http://localhost:8000/docs](http://localhost:8000/docs))
+- **MLflow Tracking Server & Model Registry (`mlflow`):** [http://localhost:5001](http://localhost:5001)
+- **Airflow Orchestration (`airflow`):** [http://localhost:8080](http://localhost:8080)
+- **PostgreSQL Database (`postgres`):** Metadata store on port 5432
 
-- Airflow UI: [http://localhost:8080](http://localhost:8080)
-  (`admin` / password from terminal output)
-- MLflow UI: [http://localhost:5001](http://localhost:5001)
-
-The MLflow tracking URI is read from the `MLFLOW_TRACKING_URI` environment
-variable (defaults to `http://127.0.0.1:5001` if unset), not hardcoded.
-The tracking server uses a SQLite backend
-(`BACKEND_STORE_URI=sqlite:////opt/mlflow/mlflow.db`) with artifacts
-written to `/opt/mlflow/mlruns`.
-
-### 4. Run the pipeline
-
-In the Airflow UI, find the `pal_passenger_data_pipeline` DAG, un-pause it,
-and trigger a run (the play button). Watch the three tasks
-(`extract -> validate -> load`) turn green in the Graph view. Each
-training/evaluation run also appears as a logged run in the MLflow UI.
-
-To stop everything:
-
+To stop all containers:
 ```bash
 docker compose down
 ```
 
-## Output artifact
+---
 
-The `load` task writes to `data/processed/`:
-
-```
-data/processed/pal_passengers_clean_<UTC timestamp>.parquet
-```
-
-e.g. `pal_passengers_clean_20260717T055021Z.parquet`. Each run produces a
-new file, so historical runs are never overwritten -- this is the
-"versioned artifact" required by the spec (each run is uniquely
-identifiable by its UTC run ID). Intermediate staging files used to pass
-data between tasks live in `data/staging/` and are not meant to be
-committed (see `.gitignore`).
-
-## Repository structure
+## 5. Repository Structure
 
 ```
+.
 ├── .github/
 │   └── workflows/
-│       └── ci.yml             # lint + test + coverage on push/PR to main
+│       └── ci.yml                     # GitHub Actions CI: lint -> test -> coverage
+├── api/
+│   ├── __init__.py
+│   ├── main.py                        # FastAPI application with /health and /predict
+│   ├── model_loader.py                # ModelService loader (MLflow registry & artifact fallback)
+│   └── schemas.py                     # Pydantic request/response validation models
 ├── dags/
-│   ├── pipeline_logic.py     # extract/validate/load functions + Pandera schema
-│   └── training_pipeline.py  # Airflow DAG wiring the three tasks together
-├── data/
-│   ├── raw/                       # sample/aggregated PAL exports (no PII)
-│   ├── benchmark_data.parquet     # benchmark reference dataset
-│   ├── sample_drifted_data.parquet# sample production dataset with controlled drift
-│   ├── staging/                   # intermediate files between tasks (gitignored)
-│   └── processed/                 # versioned clean output artifacts (gitignored)
+│   ├── pipeline_logic.py              # Pandera data validation schema & extract/load logic
+│   └── training_pipeline.py           # Airflow DAG orchestrating ETL pipeline
+├── data/                              # Synthetic PAL booking datasets (no real PII)
+│   ├── raw/                           # Raw booking export sheets
+│   ├── benchmark_data.parquet         # Baseline reference dataset
+│   └── sample_drifted_data.parquet    # Production dataset for drift evaluation
 ├── models/
-│   └── train.py                   # training script with MLflow tracking
+│   ├── train.py                       # KMeans model training script with MLflow logging
+│   └── pal_passenger_segmenter_v1.0.0.joblib # Versioned model artifact
+├── monitoring/
+│   └── run_report.py                  # Generates Evidently data & prediction drift report
 ├── reports/
-│   ├── data_drift_report.html     # Evidently interactive data drift report
-│   └── data_drift_test_suite.html # Evidently test suite report
+│   ├── evidently_report.html          # Interactive HTML drift dashboard
+│   └── findings.md                    # Detailed interpretation & production remediation playbook
 ├── tests/
-│   ├── test_pipeline.py             # data validation tests (Pandera schema)
-│   ├── test_model_quality.py        # model quality / threshold tests
-│   ├── test_pipeline_integration.py # end-to-end pipeline integration test
-│   └── test_data_drift.py           # Evidently AI data drift monitoring & 15% threshold tests
-├── Dockerfile                 # Airflow + MLflow image, our pipeline dependencies
-├── docker-compose.yaml        # Postgres + Airflow (standalone) + MLflow
-├── requirements-airflow.txt   # deps installed inside the Airflow container
-├── pyproject.toml
-├── .pre-commit-config.yaml
-└── .gitignore
+│   ├── test_api.py                    # FastAPI endpoint tests (health, predict, 422 checks)
+│   ├── test_data_validation.py        # Pandera schema rejection tests
+│   ├── test_model_quality.py          # Silhouette & Davies-Bouldin threshold tests
+│   ├── test_pipeline_integration.py   # End-to-end pipeline integration test
+│   ├── test_monitoring.py             # Evidently drift module tests
+│   ├── test_train.py                  # Model training and artifact persistence tests
+│   └── test_data_drift.py             # Milestone 2 drift test suite
+├── Dockerfile                         # Airflow + MLflow container image
+├── Dockerfile.api                     # Production FastAPI container image
+├── docker-compose.yaml                # Multi-container stack (FastAPI + MLflow + Airflow + Postgres)
+├── pyproject.toml                     # Project dependencies and tool configurations
+└── README.md
 ```
-
-## Data note
-
-The files in `data/raw/` are aggregated exports (PAX counts and average
-fares grouped by route/cabin/farebrand/etc.), not passenger-level records,
-so no individual PII is present.
